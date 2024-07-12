@@ -34,7 +34,13 @@ namespace Common.Infrastructure.Implementations.Services
                         return new ServiceResponse<IEnumerable<BankResponseDTO>>(false, $"{(int)response.StatusCode} | {response.ReasonPhrase}", null!);
                     }
 
+                    if (stringResult == "Invalid JSON")
+                    {
+                        return new ServiceResponse<IEnumerable<BankResponseDTO>>(false, "Invalid response object returned.", null!);
+                    }
+
                     var responseObject = JObject.Parse(stringResult);
+
                     var resultArray = responseObject["result"]?.ToString();
                     var formResponse = JsonConvert.DeserializeObject<List<BankResponseDTO>>(resultArray!);
 
@@ -44,7 +50,7 @@ namespace Common.Infrastructure.Implementations.Services
                     }
                     else
                     {
-                        return new ServiceResponse<IEnumerable<BankResponseDTO>>(false, "Unable to parse response from BankAudit FormX API.", null!);
+                        return new ServiceResponse<IEnumerable<BankResponseDTO>>(false, "Unable to parse response from Get Banks API.", null!);
                     }
                 }
             }

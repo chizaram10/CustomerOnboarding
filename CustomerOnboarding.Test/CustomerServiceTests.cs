@@ -1,95 +1,150 @@
 using Common.Core;
 using Common.Core.Entities;
+using Common.Core.Interfaces.Services;
 using Common.Infrastructure.Data;
 using Common.Infrastructure.Implementations.Services;
 using Microsoft.EntityFrameworkCore;
-using Moq;
+using Xunit;
 
 namespace CustomerOnboarding.Test
 {
-    public class CustomerServiceTests
+    public class CustomerServiceTests : IClassFixture<DatabaseFixture>
     {
+        private readonly DatabaseFixture _fixture;
         private readonly CustomerService _customerService;
-        private readonly AppDbContext _context;
 
-        public CustomerServiceTests()
+        public CustomerServiceTests(DatabaseFixture fixture)
         {
-            var options = new DbContextOptionsBuilder<AppDbContext>()
-                .UseInMemoryDatabase(databaseName: "TestDatabase")
-                .Options;
-            _context = new AppDbContext(options);
-
-            _customerService = new CustomerService(_context);
+            _fixture = fixture;
+            _customerService = new CustomerService(_fixture.Context);
         }
 
         [Fact]
         public async Task GetAllCustomersAsync_ShouldReturnAllCustomers()
         {
             // Arrange
-            var customers = new List<Customer>
-            {
-                new Customer { Email = "test1@example.com", PhoneNumber = "1234567890", LGA = new LGA { Name = "LGA1", State = new State { Name = "State1" } }, IsVerified = true },
-                new Customer { Email = "test2@example.com", PhoneNumber = "0987654321", LGA = new LGA { Name = "LGA2", State = new State { Name = "State2" } }, IsVerified = false }
-            };
-
-            _context.Customers.AddRange(customers);
-            await _context.SaveChangesAsync();
+            var expectedCount = 4;
 
             // Act
             var result = await _customerService.GetAllCustomersAsync();
 
             // Assert
             Assert.True(result.Success);
-            Assert.Equal(2, result.Data.Count());
+            Assert.Equal(expectedCount, result.Data.Count());
         }
 
         [Fact]
         public async Task OnboardCustomerAsync_ShouldCreateCustomer()
         {
             // Arrange
-            var lga = new LGA { Id = 1, Name = "LGA1", StateId = 1 };
-            var state = new State { Id = 1, Name = "State1" };
-            _context.LGAs.Add(lga);
-            _context.States.Add(state);
-            await _context.SaveChangesAsync();
-
-            var request = new OnboardCustomerRequestDTO("1234567890", "test@example.com", "password", 1, 1);
+            var request = new OnboardCustomerRequestDTO("567-890-1234", "newcustomer@example.com", "newpassword", 1, 2);
 
             // Act
             var result = await _customerService.OnboardCustomerAsync(request);
 
             // Assert
             Assert.True(result.Success);
-            var customer = await _context.Customers.FirstOrDefaultAsync(c => c.Email == request.Email);
+            var customer = await _fixture.Context.Customers.FirstOrDefaultAsync(c => c.Email == request.Email);
             Assert.NotNull(customer);
             Assert.Equal(request.Email, customer.Email);
+        }
+
+        [Fact]
+        public async Task OnboardCustomerAsync_ShouldFailIfLGANotFound()
+        {
+            // Arrange
+            var request = new OnboardCustomerRequestDTO("567-890-1234", "newcustomer@example.com", "newpassword", 99, 99);
+
+            // Act
+            var result = await _customerService.OnboardCustomerAsync(request);
+
+            // Assert
+            Assert.False(result.Success);
+            Assert.Equal("LGA not found.", result.Message);
+        }
+
+        [Fact]
+        public async Task OnboardCustomerAsync_ShouldFailIfLGAStateMismatch()
+        {
+            // Arrange
+            var request = new OnboardCustomerRequestDTO("567-890-1234", "newcustomer@example.com", "newpassword", 2, 1);
+
+            // Act
+            var result = await _customerService.OnboardCustomerAsync(request);
+
+            // Assert
+            Assert.False(result.Success);
+            Assert.Equal("LGA not mapped to State.", result.Message);
+        }
+
+        [Fact]
+        public async Task OnboardCustomerAsync_ShouldFailIfCustomerAlreadyExists()
+        {
+            // Arrange
+            var request = new OnboardCustomerRequestDTO("123-456-7890", "customer1@example.com", "password", 1, 1);
+
+            // Act
+            var result = await _customerService.OnboardCustomerAsync(request);
+
+            // Assert
+            Assert.False(result.Success);
+            Assert.Equal($"Account with email {request.Email} already exists.", result.Message);
         }
 
         [Fact]
         public async Task VerifyOtpAsync_ShouldVerifyCustomer()
         {
             // Arrange
-            var customer = new Customer
-            {
-                Email = "test@example.com",
-                PhoneNumber = "1234567890",
-                Password = "encryptedpassword",
-                LGAId = 1,
-                IsVerified = false
-            };
-
-            _context.Customers.Add(customer);
-            await _context.SaveChangesAsync();
-
-            var request = new OTPVerificationRequestDTO("test@example.com",  "123456");
+            var request = new OTPVerificationRequestDTO("customer2@example.com", "123456");
 
             // Act
             var result = await _customerService.VerifyOtpAsync(request);
 
             // Assert
             Assert.True(result.Success);
-            var updatedCustomer = await _context.Customers.FirstOrDefaultAsync(c => c.Email == request.Email);
-            Assert.True(updatedCustomer!.IsVerified);
+            var customer = await _fixture.Context.Customers.FirstOrDefaultAsync(c => c.Email == request.Email);
+            Assert.True(customer!.IsVerified);
+        }
+
+        [Fact]
+        public async Task VerifyOtpAsync_ShouldFailIfCustomerDoesNotExist()
+        {
+            // Arrange
+            var request = new OTPVerificationRequestDTO("nonexistent@example.com", "123456");
+
+            // Act
+            var result = await _customerService.VerifyOtpAsync(request);
+
+            // Assert
+            Assert.False(result.Success);
+            Assert.Equal("Account with email nonexistent@example.com does not exists.", result.Message);
+        }
+
+        [Fact]
+        public async Task VerifyOtpAsync_ShouldFailIfOtpIsInvalid()
+        {
+            // Arrange
+            var request = new OTPVerificationRequestDTO("customer2@example.com", "wrongotp");
+
+            // Act
+            var result = await _customerService.VerifyOtpAsync(request);
+
+            // Assert
+            Assert.False(result.Success);
+            Assert.Equal("Invalid OTP.", result.Message);
+        }
+        [Fact]
+        public async Task VerifyOtpAsync_ShouldPassIfOtpIsInvalid()
+        {
+            // Arrange
+            var request = new OTPVerificationRequestDTO("customer2@example.com", "123456");
+
+            // Act
+            var result = await _customerService.VerifyOtpAsync(request);
+
+            // Assert
+            Assert.True(result.Success);
+            Assert.Equal("Account verified successfully.", result.Message);
         }
     }
 }
